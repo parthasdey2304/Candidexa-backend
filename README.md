@@ -63,7 +63,7 @@ You can view the interactive Swagger documentation at `http://localhost:8000/doc
 
 ## 📁 Project Structure
 
-\`\`\`text
+``` text
 backend/
 ├── app/
 │   ├── api/
@@ -79,7 +79,7 @@ backend/
 ├── .env.example             # Template for environment variables
 ├── main.py                  # FastAPI application entry point
 └── requirements.txt         # Python dependencies
-\`\`\`
+```
 
 ## 🔒 Security Posture
 This backend was built with security-first principles:
