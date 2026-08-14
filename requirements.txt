@@ -12,3 +12,4 @@ python-dotenv>=1.0.0
 secure==0.3.0
 httpx>=0.25.0
 requests>=2.25.0
+email-validator>=2.0.0
