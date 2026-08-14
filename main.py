@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from secure import Secure, StrictTransportSecurity, XFrameOptions, XXSSProtection, XContentTypeOptions, ReferrerPolicy
+from secure import Secure, StrictTransportSecurity, XFrameOptions, XContentTypeOptions, ReferrerPolicy
 from app.core.logging_middleware import LoggingMiddleware
 
 from app.api.routes import auth, mistral, resumes, jobs, dashboard
@@ -15,7 +15,6 @@ limiter = Limiter(key_func=get_remote_address)
 secure_headers = Secure(
     sts=StrictTransportSecurity().include_subdomains().preload().max_age(31536000),
     xfo=XFrameOptions().deny(),
-    xxp=XXSSProtection().block(),
     xcto=XContentTypeOptions().nosniff(),
     rp=ReferrerPolicy().strict_origin_when_cross_origin()
 )
