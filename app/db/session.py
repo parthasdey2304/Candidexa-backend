@@ -1,20 +1,11 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from supabase import create_client, Client
 from app.core.config import settings
 
-# In PostgreSQL it usually starts with postgresql:// or postgresql+psycopg2://
-engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args={"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {}
-)
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-Base = declarative_base()
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+def get_supabase_client() -> Client:
+    url: str = settings.SUPABASE_URL
+    # We use the Service Role Key here so the backend can bypass RLS for administrative actions,
+    # or you can use the Anon key if you want RLS to apply based on JWTs passed to Supabase.
+    key: str = settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_ANON_KEY
+    if not url or not key:
+        raise ValueError("Supabase credentials not found in environment variables.")
+    return create_client(url, key)

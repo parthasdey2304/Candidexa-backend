@@ -3,27 +3,23 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 import jwt
 from pydantic import ValidationError
-from sqlalchemy.orm import Session
+from supabase import Client
 
-from app.db.session import SessionLocal
+from app.db.session import get_supabase_client
 from app.core.config import settings
-from app.db.models import User
 from app.schemas.user import TokenPayload
 
 reusable_oauth2 = OAuth2PasswordBearer(
     tokenUrl="/api/auth/login"
 )
 
-def get_db() -> Generator:
-    try:
-        db = SessionLocal()
-        yield db
-    finally:
-        db.close()
+def get_db() -> Client:
+    # Yielding a Supabase client instead of SQLAlchemy session
+    return get_supabase_client()
 
 def get_current_user(
-    db: Session = Depends(get_db), token: str = Depends(reusable_oauth2)
-) -> User:
+    db: Client = Depends(get_db), token: str = Depends(reusable_oauth2)
+) -> dict:
     try:
         payload = jwt.decode(
             token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
@@ -34,9 +30,16 @@ def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Could not validate credentials",
         )
-    user = db.query(User).filter(User.id == token_data.sub).first()
-    if not user:
+    
+    # Query user from Supabase
+    response = db.table("users").select("*").eq("id", token_data.sub).execute()
+    users = response.data
+    
+    if not users:
         raise HTTPException(status_code=404, detail="User not found")
-    if not user.is_active:
+        
+    user = users[0]
+    if not user.get("is_active"):
         raise HTTPException(status_code=400, detail="Inactive user")
+        
     return user

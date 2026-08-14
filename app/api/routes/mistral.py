@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from app.api.deps import get_current_user
-from app.db.models import User
 from app.core.config import settings
+from typing import Dict, Any
 
 router = APIRouter()
 
@@ -58,7 +58,7 @@ def check_prompt_injection(text: str) -> bool:
 @router.post("/match", response_model=MistralResponse)
 async def analyze_match(
     payload: MistralRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Secure proxy to Mistral API. Requires valid JWT.
@@ -111,7 +111,7 @@ async def analyze_match(
 @router.post("/cover-letter", response_model=CoverLetterResponse)
 async def generate_cover_letter(
     payload: CoverLetterRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Secure proxy to Mistral API for generating a cover letter.

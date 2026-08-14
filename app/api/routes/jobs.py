@@ -1,8 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Dict, Any
+from supabase import Client
 
-from app.db.models import Job, User
 from app.api.deps import get_db, get_current_user
 from app.schemas.core import JobCreate, JobUpdate, JobInDB
 
@@ -11,44 +10,45 @@ router = APIRouter()
 @router.post("/", response_model=JobInDB)
 def create_job(
     job_in: JobCreate, 
-    db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)
+    db: Client = Depends(get_db), 
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    job = Job(**job_in.model_dump(), user_id=current_user.id)
-    db.add(job)
-    db.commit()
-    db.refresh(job)
-    return job
+    job_data = job_in.model_dump()
+    job_data["user_id"] = current_user.get("id")
+    
+    res = db.table("jobs").insert(job_data).execute()
+    if not res.data:
+        raise HTTPException(status_code=500, detail="Failed to create job")
+    return res.data[0]
 
 @router.get("/", response_model=List[JobInDB])
 def read_jobs(
     skip: int = 0, limit: int = 100, 
-    db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)
+    db: Client = Depends(get_db), 
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    jobs = db.query(Job).filter(Job.user_id == current_user.id).offset(skip).limit(limit).all()
-    return jobs
+    end_idx = skip + limit - 1
+    res = db.table("jobs").select("*").eq("user_id", current_user.get("id")).range(skip, end_idx).execute()
+    return res.data
 
 @router.get("/{job_id}", response_model=JobInDB)
 def read_job(
     job_id: int, 
-    db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)
+    db: Client = Depends(get_db), 
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    job = db.query(Job).filter(Job.id == job_id, Job.user_id == current_user.id).first()
-    if not job:
+    res = db.table("jobs").select("*").eq("id", job_id).eq("user_id", current_user.get("id")).execute()
+    if not res.data:
         raise HTTPException(status_code=404, detail="Job not found")
-    return job
+    return res.data[0]
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_job(
     job_id: int, 
-    db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)
+    db: Client = Depends(get_db), 
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    job = db.query(Job).filter(Job.id == job_id, Job.user_id == current_user.id).first()
-    if not job:
+    res = db.table("jobs").delete().eq("id", job_id).eq("user_id", current_user.get("id")).execute()
+    if not res.data:
         raise HTTPException(status_code=404, detail="Job not found")
-    db.delete(job)
-    db.commit()
     return None

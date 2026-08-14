@@ -4,12 +4,9 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from secure import Secure, StrictTransportSecurity, XFrameOptions, XXSSProtection, XContentTypeOptions, ReferrerPolicy
+from app.core.logging_middleware import LoggingMiddleware
 
 from app.api.routes import auth, mistral, resumes, jobs, dashboard
-from app.db.session import engine, Base
-
-# Create tables for demonstration
-Base.metadata.create_all(bind=engine)
 
 # Initialize Rate Limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -46,6 +43,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add custom frontend logging middleware
+app.add_middleware(LoggingMiddleware)
 
 # Middleware for Security Headers
 @app.middleware("http")

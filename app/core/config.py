@@ -4,7 +4,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Candidexa Backend"
     
     # DB
-    DATABASE_URL: str = "sqlite:///./candidexa.db" # Default to sqlite for easy local dev, swap to postgres via env on Railway
+    DATABASE_URL: str = "sqlite:///./candidexa.db"
     
     # JWT
     JWT_SECRET_KEY: str = "super-secret-key-please-change-in-prod"
@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     
     # Mistral AI
     MISTRAL_API_KEY: str = ""
+    
+    # Supabase
+    SUPABASE_URL: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
+    SUPABASE_ANON_KEY: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra='ignore')
 
