@@ -15,7 +15,7 @@ limiter = Limiter(key_func=get_remote_address)
 secure_headers = Secure(
     sts=StrictTransportSecurity().include_subdomains().preload().max_age(31536000),
     xfo=XFrameOptions().deny(),
-    xcto=XContentTypeOptions().nosniff(),
+    xcto=XContentTypeOptions().nosniff,
     rp=ReferrerPolicy().strict_origin_when_cross_origin()
 )
 
