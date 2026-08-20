@@ -67,3 +67,7 @@ services:
         value: INFO
       - key: APP_VERSION
         value: "0.1.0"
+      - key: FIELD_ENCRYPTION_KEY
+        sync: false
+      - key: FIELD_BLIND_INDEX_KEY
+        sync: false

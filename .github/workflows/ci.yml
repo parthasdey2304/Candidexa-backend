@@ -13,6 +13,20 @@ jobs:
       redis:
         image: redis:7-alpine
         ports: ["6379:6379"]
+    env:
+      ENVIRONMENT: test
+      JWT_SECRET: test-secret-key-for-testing-only-32chars-long
+      JWT_ALGORITHM: HS256
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/test
+      SUPABASE_URL: http://localhost:54321
+      SUPABASE_ANON_KEY: test-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: test-service-role-key
+      GEMINI_API_KEY: test-gemini-key
+      MISTRAL_API_KEY: test-mistral-key
+      FRONTEND_ORIGINS: http://localhost:3000
+      REDIS_URL: redis://localhost:6379/0
+      FIELD_ENCRYPTION_KEY: dGVzdC1lbmNyeXB0aW9uLWtleS0zMi1ieXRlcw==
+      FIELD_BLIND_INDEX_KEY: dGVzdC1ibGluZC1pbmRleC1rZXktMzItYnl0ZXM=
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,20 +57,6 @@ jobs:
 
       - name: Run tests
         run: pytest -q
-        env:
-          ENVIRONMENT: test
-          JWT_SECRET: test-secret-key-for-testing-only-32chars-long
-          JWT_ALGORITHM: HS256
-          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/test
-          SUPABASE_URL: http://localhost:54321
-          SUPABASE_ANON_KEY: test-anon-key
-          SUPABASE_SERVICE_ROLE_KEY: test-service-role-key
-          GEMINI_API_KEY: test-gemini-key
-          MISTRAL_API_KEY: test-mistral-key
-          FRONTEND_ORIGINS: http://localhost:3000
-          REDIS_URL: redis://localhost:6379/0
-          FIELD_ENCRYPTION_KEY: dGVzdC1lbmNyeXB0aW9uLWtleS0zMi1ieXRlcw==
-          FIELD_BLIND_INDEX_KEY: dGVzdC1ibGluZC1pbmRleC1rZXktMzItYnl0ZXM=
 
   docker:
     runs-on: ubuntu-latest
