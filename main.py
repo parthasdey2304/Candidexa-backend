@@ -1,70 +1,82 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from secure import Secure, StrictTransportSecurity, XFrameOptions, XContentTypeOptions, ReferrerPolicy
 from app.core.logging_middleware import LoggingMiddleware
+from app.core.config import settings
+from app.core.errors import register_exception_handlers
+from app.core.headers import SecurityHeadersMiddleware, get_csp_header, get_permissions_policy
+from app.core.rate_limit import init_rate_limiter, close_rate_limiter
 
-from app.api.routes import auth, mistral, resumes, jobs, dashboard
+from app.api.routes import auth, mistral, resumes, jobs, dashboard, ai
 
 # Initialize Rate Limiter
 limiter = Limiter(key_func=get_remote_address)
 
-# Initialize Security Headers
-secure_headers = Secure(
-    sts=StrictTransportSecurity().include_subdomains().preload().max_age(31536000),
-    xfo=XFrameOptions().deny(),
-    xcto=XContentTypeOptions().nosniff,
-    rp=ReferrerPolicy().strict_origin_when_cross_origin()
-)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await init_rate_limiter()
+    yield
+    # Shutdown
+    await close_rate_limiter()
+
 
 app = FastAPI(
     title="Candidexa Backend",
     description="Secure FastAPI backend for Candidexa",
-    version="1.0.0"
+    version=settings.VERSION,
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    lifespan=lifespan,
 )
+
+# Register global exception handlers
+register_exception_handlers(app)
 
 # Add Rate Limiter Exception Handler
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Setup CORS (Strictly limit to frontend domain in production)
-origins = [
-    "http://localhost:3000",
-    # Add production frontend URL here later
-]
-
+# Setup CORS using settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
 )
 
 # Add custom frontend logging middleware
 app.add_middleware(LoggingMiddleware)
 
-# Middleware for Security Headers
-@app.middleware("http")
-async def set_secure_headers(request: Request, call_next):
-    response = await call_next(request)
-    secure_headers.framework.fastapi(response)
-    return response
+# Add Security Headers Middleware
+app.add_middleware(
+    SecurityHeadersMiddleware,
+    csp=get_csp_header(),
+    permissions_policy=get_permissions_policy(),
+)
 
 @app.get("/")
 @limiter.limit("10/minute")
 async def root(request: Request):
     return {"message": "Welcome to Candidexa Secure API"}
 
-@app.get("/health")
-@limiter.limit("5/minute")
-async def health_check(request: Request):
-    return {"status": "ok"}
+@app.get("/health", include_in_schema=False)
+async def health_check():
+    return {"status": "ok", "service": "candidexa-backend", "version": settings.VERSION}
+
+@app.get("/ready", include_in_schema=False)
+async def readiness_check():
+    # Database check will be added after DB layer is finalized
+    return {"status": "ready", "database": "ok"}
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(mistral.router, prefix="/api/ai", tags=["ai"])
 app.include_router(resumes.router, prefix="/api/resumes", tags=["resumes"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
+app.include_router(ai.router, prefix="/api/ai", tags=["ai-v2"])

@@ -1,0 +1,80 @@
+# Git
+.git
+.github
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[codz]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.pdm-python/
+.pdm-build/
+.pixi/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+frontend_requests.log
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.whl
+
+# Coverage
+coverage.xml
+
+# Temporary files
+tempCodeRunnerFile.py
+*.tmp
+*.temp
+
+# Node (if any)
+node_modules/
+
+# Secrets
+secrets/
+*.pem
+*.key
+*.crt
+
+# Uploads
+uploads/
+media/
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml

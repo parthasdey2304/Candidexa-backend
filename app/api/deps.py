@@ -22,7 +22,7 @@ def get_current_user(
 ) -> dict:
     try:
         payload = jwt.decode(
-            token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]
+            token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM]
         )
         token_data = TokenPayload(**payload)
     except (jwt.PyJWTError, ValidationError):
