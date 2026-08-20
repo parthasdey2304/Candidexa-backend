@@ -8,12 +8,13 @@ from app.core.errors import register_exception_handlers
 from app.core.headers import SecurityHeadersMiddleware
 from app.core.logging_middleware import RequestIdMiddleware
 from app.api.routes import auth, resumes, jobs, ai
-from app.db.session import engine
+from app.db.session import get_async_engine
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
+    engine = get_async_engine()
     await engine.dispose()
 
 

@@ -1,6 +1,9 @@
 from __future__ import annotations
+from datetime import datetime, timezone, timedelta
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, OAuth2PasswordRequestForm
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from sqlalchemy import select
@@ -15,6 +18,7 @@ from app.core.security import (
     decode_token,
 )
 from app.core.crypto import blind_index
+from app.core.config import settings
 from app.db.models import User, RefreshToken
 
 router = APIRouter()
@@ -61,7 +65,6 @@ async def register(
     await db.commit()
 
     # Set CSRF token for this session
-    import secrets
     request.state.csrf_token = secrets.token_urlsafe(32)
 
     return {
@@ -91,7 +94,6 @@ async def login(
         # Increment failed attempts
         user.failed_login_attempts += 1
         if user.failed_login_attempts >= 5:
-            from datetime import datetime, timezone, timedelta
             user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
         await db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect email or password")
@@ -111,7 +113,6 @@ async def login(
     await db.commit()
 
     # Set CSRF token for this session
-    import secrets
     request.state.csrf_token = secrets.token_urlsafe(32)
 
     return {
@@ -129,22 +130,22 @@ async def refresh_token(
 ):
     """Rotate refresh token and issue new access token."""
     if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing_refresh_token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing_refresh_token")
 
     try:
         payload = decode_token(credentials.credentials, expected_type="refresh")
     except ValueError as e:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_token")
 
     rt = await db.get(RefreshToken, payload["jti"])
     if rt is None or rt.revoked or rt.expires_at < datetime.now(timezone.utc):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "refresh_token_invalid")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="refresh_token_invalid")
 
     # Revoke old token (rotation defeats token theft replay)
     rt.revoked = True
     user = await db.get(User, rt.user_id)
     if user is None or not user.is_active:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "user_invalid")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="user_invalid")
 
     # Issue new tokens
     access_token = create_access_token(str(user.id))
@@ -167,12 +168,12 @@ async def logout(
 ):
     """Revoke refresh token (logout)."""
     if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing_refresh_token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing_refresh_token")
 
     try:
         payload = decode_token(credentials.credentials, expected_type="refresh")
     except ValueError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_token")
 
     rt = await db.get(RefreshToken, payload["jti"])
     if rt:
@@ -238,10 +239,3 @@ async def google_auth(
 
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Google token")
-
-
-# Add missing imports at the top
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from datetime import datetime, timezone
-import secrets
-from app.core.config import settings
