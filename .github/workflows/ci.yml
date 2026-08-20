@@ -25,8 +25,8 @@ jobs:
       MISTRAL_API_KEY: test-mistral-key
       FRONTEND_ORIGINS: http://localhost:3000
       REDIS_URL: redis://localhost:6379/0
-      FIELD_ENCRYPTION_KEY: dGVzdC1lbmNyeXB0aW9uLWtleS0zMi1ieXRlcw==
-      FIELD_BLIND_INDEX_KEY: dGVzdC1ibGluZC1pbmRleC1rZXktMzItYnl0ZXM=
+      FIELD_ENCRYPTION_KEY: HsjEsH0uglgyqCY5mff2zxFeFiAZEHpVQclHnabI79E=
+      FIELD_BLIND_INDEX_KEY: DmuKj1sbJDfKpCwAtkm5Q/wUwtSFLUbomoQFJ7ptDz0=
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -88,8 +88,8 @@ jobs:
             -e SUPABASE_SERVICE_ROLE_KEY=test-service-role-key \
             -e FRONTEND_ORIGINS=http://localhost:3000 \
             -e REDIS_URL=redis://localhost:6379/0 \
-            -e FIELD_ENCRYPTION_KEY=dGVzdC1lbmNyeXB0aW9uLWtleS0zMi1ieXRlcw== \
-            -e FIELD_BLIND_INDEX_KEY=dGVzdC1ibGluZC1pbmRleC1rZXktMzItYnl0ZXM= \
+            -e FIELD_ENCRYPTION_KEY=HsjEsH0uglgyqCY5mff2zxFeFiAZEHpVQclHnabI79E= \
+            -e FIELD_BLIND_INDEX_KEY=DmuKj1sbJDfKpCwAtkm5Q/wUwtSFLUbomoQFJ7ptDz0= \
             candidexa-backend:latest
           sleep 5
           curl -f http://localhost:8000/health
