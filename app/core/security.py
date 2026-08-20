@@ -1,94 +1,108 @@
+from __future__ import annotations
+import base64
+import hmac
+import hashlib
+import secrets
+import time
+import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal
 
-import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, InvalidHashError
-from passlib.context import CryptContext
+from jose import jwt, JWTError
 
 from app.core.config import settings
 
-# Argon2id per the Candidexa security spec: 19 MiB memory, t=2, p=1.
-pwd_hasher = PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1)
-
-# Legacy scheme used before the Argon2id migration. Kept only so existing
-# users can log in once and be transparently upgraded to an Argon2id hash.
-legacy_pwd_context = CryptContext(schemes=["sha256_crypt"], deprecated="auto")
-
-TOKEN_TYPE_ACCESS = "access"
-TOKEN_TYPE_REFRESH = "refresh"
-
-
-def get_password_hash(password: str) -> str:
-    return pwd_hasher.hash(password)
+# Argon2id - memory-hard, side-channel resistant, OWASP-recommended.
+_argon2 = PasswordHasher(
+    time_cost=3,
+    memory_cost=64 * 1024,   # 64 MiB
+    parallelism=2,
+    hash_len=32,
+    salt_len=16,
+    type=2,                  # argon2.Type.ID
+)
 
 
-def verify_password(plain_password: str, hashed_password: Optional[str]) -> bool:
-    """Verify a password against an Argon2id hash, falling back to the
-    legacy sha256_crypt scheme for hashes created before the migration."""
-    if not hashed_password:
-        return False
-    if hashed_password.startswith("$argon2"):
-        try:
-            return pwd_hasher.verify(hashed_password, plain_password)
-        except VerifyMismatchError:
-            return False
-        except InvalidHashError:
-            return False
+# ---------- Passwords ----------
+def hash_password(plain: str) -> str:
+    if not plain or len(plain) < 8:
+        raise ValueError("Password must be at least 8 characters")
+    return _argon2.hash(plain)
+
+
+def verify_password(plain: str, hashed: str) -> bool:
     try:
-        return legacy_pwd_context.verify(plain_password, hashed_password)
-    except Exception:
+        return _argon2.verify(hashed, plain)
+    except (VerifyMismatchError, InvalidHashError):
         return False
 
 
-def needs_rehash(hashed_password: Optional[str]) -> bool:
-    """True when the stored hash is legacy (or used weak parameters) and
-    should be replaced with a fresh Argon2id hash on the next successful login."""
-    if not hashed_password:
-        return False
-    if not hashed_password.startswith("$argon2"):
-        return True
-    try:
-        return pwd_hasher.check_needs_rehash(hashed_password)
-    except InvalidHashError:
-        return True
+def needs_rehash(hashed: str) -> bool:
+    return _argon2.check_needs_rehash(hashed)
 
 
-def _create_token(
-    subject: str,
-    token_type: Literal["access", "refresh"],
-    expires_delta: timedelta,
-    extra_claims: Optional[Dict[str, Any]] = None,
-) -> str:
+# ---------- JWT ----------
+def _encode_key() -> tuple[Any, str]:
+    if settings.JWT_ALGORITHM == "RS256":
+        if not settings.JWT_PRIVATE_KEY:
+            raise RuntimeError("RS256 selected but JWT_PRIVATE_KEY not set")
+        return settings.JWT_PRIVATE_KEY, "RS256"
+    return settings.JWT_SECRET, "HS256"
+
+
+def _decode_key() -> tuple[Any, str]:
+    if settings.JWT_ALGORITHM == "RS256":
+        if not settings.JWT_PUBLIC_KEY:
+            raise RuntimeError("RS256 selected but JWT_PUBLIC_KEY not set")
+        return settings.JWT_PUBLIC_KEY, "RS256"
+    return settings.JWT_SECRET, "HS256"
+
+
+def create_access_token(sub: str, extra: dict | None = None) -> str:
     now = datetime.now(timezone.utc)
-    payload: Dict[str, Any] = {
-        "sub": str(subject),
-        "type": token_type,
-        "iat": now,
-        "exp": now + expires_delta,
+    jti = str(uuid.uuid4())
+    payload: dict[str, Any] = {
+        "sub": sub,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)).timestamp()),
+        "jti": jti,
+        "type": "access",
+        **(extra or {}),
     }
-    if extra_claims:
-        payload.update(extra_claims)
-    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+    key, alg = _encode_key()
+    return jwt.encode(payload, key, algorithm=alg)
 
 
-def create_access_token(subject: str) -> str:
-    return _create_token(
-        subject, TOKEN_TYPE_ACCESS, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    )
+def create_refresh_token(sub: str) -> tuple[str, str, datetime]:
+    """Returns (token, jti, expiry) - caller must persist jti in DB."""
+    now = datetime.now(timezone.utc)
+    jti = secrets.token_urlsafe(32)
+    exp = now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    payload = {
+        "sub": sub,
+        "iat": int(now.timestamp()),
+        "exp": int(exp.timestamp()),
+        "jti": jti,
+        "type": "refresh",
+    }
+    key, alg = _encode_key()
+    return jwt.encode(payload, key, algorithm=alg), jti, exp
 
 
-def create_refresh_token(subject: str) -> str:
-    return _create_token(
-        subject, TOKEN_TYPE_REFRESH, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    )
-
-
-def decode_token(token: str, expected_type: Literal["access", "refresh"]) -> Dict[str, Any]:
-    """Decode a JWT and enforce its type claim. Raises jwt.PyJWTError on any
-    invalid token, including using a refresh token where an access token is
-    required (and vice versa)."""
-    payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+def decode_token(token: str, expected_type: Literal["access", "refresh"]) -> dict:
+    key, alg = _decode_key()
+    try:
+        payload = jwt.decode(token, key, algorithms=[alg])
+    except JWTError as e:
+        raise ValueError(f"Invalid token: {e}")
     if payload.get("type") != expected_type:
-        raise jwt.InvalidTokenError(f"Expected a {expected_type} token")
+        raise ValueError(f"Expected {expected_type} token, got {payload.get('type')}")
+    if "jti" not in payload or "sub" not in payload:
+        raise ValueError("Malformed token claims")
     return payload
+
+
+def constant_time_eq(a: str, b: str) -> bool:
+    return hmac.compare_digest(a.encode(), b.encode())

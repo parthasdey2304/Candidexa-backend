@@ -1,94 +1,51 @@
-"""Redis-backed rate limiting for production deployments.
-
-This module provides distributed rate limiting using Redis, suitable for
-multi-instance deployments on Railway/Render.
-"""
-
+from __future__ import annotations
 import time
-from typing import Optional, Tuple
-
 import redis.asyncio as redis
-
+from fastapi import HTTPException, Request, status
 from app.core.config import settings
 
+_pool = redis.ConnectionPool.from_url(settings.REDIS_URL, decode_responses=True)
 
-class RateLimiter:
-    """Distributed rate limiter using Redis sorted sets."""
+def _client() -> redis.Redis:
+    return redis.Redis(connection_pool=_pool)
 
-    def __init__(self, redis_url: str):
-        self._client: Optional[redis.Redis] = None
-        self._redis_url = redis_url
+# Sliding-window Lua - atomic, multi-window safe.
+_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local id = ARGV[4]
 
-    async def _get_client(self) -> redis.Redis:
-        if self._client is None:
-            self._client = redis.from_url(
-                self._redis_url,
-                encoding="utf-8",
-                decode_responses=True,
-            )
-        return self._client
-
-    async def close(self) -> None:
-        if self._client:
-            await self._client.close()
-            self._client = None
-
-    async def check_limit(
-        self,
-        key: str,
-        limit: int,
-        window_seconds: int,
-    ) -> Tuple[bool, int]:
-        """Check if the key is within rate limits.
-        
-        Returns (allowed, retry_after_seconds).
-        """
-        client = await self._get_client()
-        now = time.time()
-        window_start = now - window_seconds
-        
-        # Use a sorted set with timestamps as scores
-        pipe = client.pipeline()
-        pipe.zremrangebyscore(key, 0, window_start)
-        pipe.zcard(key)
-        pipe.zadd(key, {f"{now}": now})
-        pipe.expire(key, window_seconds + 1)
-        results = await pipe.execute()
-        
-        current_count = results[1]
-        
-        if current_count >= limit:
-            # Get the oldest entry to calculate retry-after
-            oldest = await client.zrange(key, 0, 0, withscores=True)
-            if oldest:
-                oldest_time = oldest[0][1]
-                retry_after = max(1, int(oldest_time + window_seconds - now))
-            else:
-                retry_after = window_seconds
-            return False, retry_after
-        
-        return True, 0
+redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+local count = redis.call('ZCARD', key)
+if count >= limit then
+  return 0
+end
+redis.call('ZADD', key, now, id)
+redis.call('PEXPIRE', key, window)
+return 1
+"""
 
 
-# Global rate limiter instance (initialized on startup)
-_rate_limiter: Optional[RateLimiter] = None
+async def rate_limit(key: str, limit_per_min: int) -> None:
+    r = _client()
+    now = int(time.time() * 1000)
+    import uuid
+    unique_id = f"{now}:{uuid.uuid4().hex[:8]}"
+    res = await r.eval(_LUA, 1, key, now, 60_000, limit_per_min, unique_id)
+    if int(res) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="rate_limit_exceeded",
+            headers={"Retry-After": "60"},
+        )
 
 
-async def get_rate_limiter() -> Optional[RateLimiter]:
-    """Get the global rate limiter instance."""
-    return _rate_limiter
+def ip_key(request: Request, bucket: str) -> str:
+    ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or request.client.host
+    return f"rl:{bucket}:ip:{ip}"
 
 
-async def init_rate_limiter() -> None:
-    """Initialize the global rate limiter."""
-    global _rate_limiter
-    if settings.REDIS_URL:
-        _rate_limiter = RateLimiter(settings.REDIS_URL)
-
-
-async def close_rate_limiter() -> None:
-    """Close the global rate limiter."""
-    global _rate_limiter
-    if _rate_limiter:
-        await _rate_limiter.close()
-        _rate_limiter = None
+def user_key(user_id: str, bucket: str) -> str:
+    return f"rl:{bucket}:user:{user_id}"

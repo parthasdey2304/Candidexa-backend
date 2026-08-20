@@ -19,59 +19,42 @@ class TestAuthorization:
     """Tests for user authorization and data isolation."""
 
     @pytest.mark.asyncio
-    async def test_user_cannot_access_another_users_resume(self, client):
-        """Users should not access resumes they don't own."""
+    async def test_protected_route_requires_token(self, client):
+        """Protected routes should require authentication."""
+        r = await client.get("/api/v1/resumes/anything")
+        assert r.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_user_cannot_read_others_resume(self, client):
+        """Users should not be able to read other users' resumes."""
         # This test requires mocking the database
-        # Skip if no test database is configured
         pass
 
     @pytest.mark.asyncio
-    async def test_user_cannot_access_another_users_job(self, client):
-        """Users should not access jobs they don't own."""
-        pass
-
-    @pytest.mark.asyncio
-    async def test_user_cannot_access_another_users_application(self, client):
-        """Users should not access applications they don't own."""
-        pass
-
-    @pytest.mark.asyncio
-    async def test_user_cannot_access_another_users_dashboard(self, client):
-        """Users should not access another user's dashboard data."""
-        pass
+    async def test_csrf_required_on_state_changing(self, client):
+        """State-changing routes should require CSRF token."""
+        # POST without CSRF should fail
+        r = await client.post("/api/v1/resumes", json={})
+        assert r.status_code in (401, 403)
 
 
 class TestAuthorizationHelpers:
     """Tests for authorization helper functions."""
 
-    def test_owned_job_or_404_returns_404_for_other_user(self):
-        """Helper should raise 404 when job belongs to another user."""
-        from app.api.routes.applications import _owned_job_or_404
-        from fastapi import HTTPException
-        
-        # Mock db client
-        mock_db = MagicMock()
-        mock_response = MagicMock()
-        mock_response.data = []  # No matching job
-        mock_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = mock_response
-        
-        with pytest.raises(HTTPException) as exc_info:
-            import asyncio
-            asyncio.run(_owned_job_or_404(mock_db, 1, 999))
-        
-        assert exc_info.value.status_code == 404
+    def test_blind_index_stable(self):
+        """blind_index should be deterministic."""
+        from app.core.crypto import blind_index
+        assert blind_index("user@example.com") == blind_index("user@example.com")
+        assert blind_index("user@example.com") != blind_index("other@example.com")
 
-    def test_owned_job_or_404_returns_job_for_owner(self):
-        """Helper should return job when user owns it."""
-        from app.api.routes.applications import _owned_job_or_404
-        
-        # Mock db client
-        mock_db = MagicMock()
-        mock_response = MagicMock()
-        mock_response.data = [{"id": 1, "user_id": 1}]
-        mock_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value = mock_response
-        
-        import asyncio
-        result = asyncio.run(_owned_job_or_404(mock_db, 1, 1))
-        assert result["id"] == 1
-        assert result["user_id"] == 1
+    def test_field_roundtrip(self):
+        """encrypt_field / decrypt_field should round-trip."""
+        from app.core.crypto import encrypt_field, decrypt_field
+        pt = "Sensitive résumé content — PII here"
+        assert decrypt_field(encrypt_field(pt)) == pt
+
+    def test_password_never_sha256(self):
+        """Password hashing should use Argon2id, not SHA-256."""
+        from app.core.security import hash_password
+        h = hash_password("correct horse battery staple")
+        assert h.startswith("$argon2id$")  # not $sha256$

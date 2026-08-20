@@ -1,14 +1,13 @@
 """Database session management.
 
 Supports both Supabase (PostgreSQL via REST API) and direct SQLAlchemy
-connections for migrations and complex queries.
+async connections for application use.
 """
 
-from contextlib import contextmanager
-from typing import Generator
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from supabase import create_client, Client
 
 from app.core.config import settings
@@ -32,25 +31,25 @@ def get_supabase_client() -> Client:
     return _supabase_client
 
 
-# --- SQLAlchemy Engine (for migrations and direct DB access) ---
+# --- SQLAlchemy Async Engine (for application use) ---
 
-_engine = None
-_SessionLocal = None
+_async_engine: AsyncEngine | None = None
+_async_session_maker: async_sessionmaker[AsyncSession] | None = None
 
 
-def get_engine():
-    """Get or create the SQLAlchemy engine (singleton)."""
-    global _engine
-    if _engine is None:
+def get_async_engine() -> AsyncEngine:
+    """Get or create the SQLAlchemy async engine (singleton)."""
+    global _async_engine
+    if _async_engine is None:
         if not settings.DATABASE_URL:
             raise ValueError("DATABASE_URL not configured for SQLAlchemy")
-        # Normalize DATABASE_URL for psycopg3
+        # Normalize DATABASE_URL for psycopg3 async
         db_url = settings.DATABASE_URL
         if db_url.startswith("postgresql://"):
             db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
         elif db_url.startswith("postgresql+psycopg2://"):
             db_url = db_url.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
-        _engine = create_engine(
+        _async_engine = create_async_engine(
             db_url,
             pool_pre_ping=True,
             pool_size=5,
@@ -58,46 +57,40 @@ def get_engine():
             pool_timeout=30,
             pool_recycle=1800,
         )
-    return _engine
+    return _async_engine
 
 
-def get_session_factory():
-    """Get or create the SQLAlchemy session factory."""
-    global _SessionLocal
-    if _SessionLocal is None:
-        _SessionLocal = sessionmaker(
+def get_async_session_maker() -> async_sessionmaker[AsyncSession]:
+    """Get or create the SQLAlchemy async session factory."""
+    global _async_session_maker
+    if _async_session_maker is None:
+        _async_session_maker = async_sessionmaker(
+            bind=get_async_engine(),
+            class_=AsyncSession,
             autocommit=False,
             autoflush=False,
-            bind=get_engine(),
+            expire_on_commit=False,
         )
-    return _SessionLocal
+    return _async_session_maker
 
 
-@contextmanager
-def get_db_session() -> Generator[Session, None, None]:
-    """Get a SQLAlchemy database session (context manager)."""
-    SessionLocal = get_session_factory()
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI dependency for getting async DB session."""
+    async_session_maker = get_async_session_maker()
+    async with async_session_maker() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
 
-def init_db() -> None:
-    """Initialize database tables (use with caution in production)."""
-    Base.metadata.create_all(bind=get_engine())
-
-
-def close_db() -> None:
+async def close_db() -> None:
     """Close database connections."""
-    global _engine, _SessionLocal, _supabase_client
-    if _engine:
-        _engine.dispose()
-        _engine = None
-    _SessionLocal = None
+    global _async_engine, _async_session_maker, _supabase_client
+    if _async_engine:
+        await _async_engine.dispose()
+        _async_engine = None
+    _async_session_maker = None
     _supabase_client = None

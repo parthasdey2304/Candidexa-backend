@@ -1,99 +1,137 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
-from typing import List, Dict, Any
-from supabase import Client
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.api.deps import get_current_user, get_current_user_strict, get_db_session
+from app.db.models import User, Resume
+from app.core.crypto import encrypt_field, blind_index, decrypt_field
+from app.core.config import settings
+from app.services.storage_service import save_private_object
+import uuid
+import magic
 
-from app.api.deps import get_db, get_current_user
-from app.schemas.core import ResumeCreate, ResumeUpdate, ResumeInDB
-from app.services.resume_service import ResumeService, get_resume_service
-
-router = APIRouter()
+router = APIRouter(prefix="/api/v1/resumes", tags=["resumes"])
+ALLOWED_MIME = {"application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+MAX_BYTES = settings.MAX_RESUME_SIZE_MB * 1024 * 1024
 
 
-def get_resume_svc(db: Client = Depends(get_db)) -> ResumeService:
-    return get_resume_service(db)
-
-
-@router.post("/", response_model=ResumeInDB)
-def create_resume(
-    resume_in: ResumeCreate,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    resume_svc: ResumeService = Depends(get_resume_svc),
+@router.post("", status_code=201)
+async def upload_resume(
+    request: Request,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user_strict),
+    db: AsyncSession = Depends(get_db_session),
 ):
-    return resume_svc.create_resume(current_user["id"], resume_in)
+    # 1. Size check by streaming - never trust Content-Length
+    blob = await file.read(MAX_BYTES + 1)
+    if len(blob) > MAX_BYTES:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file_too_large")
+
+    # 2. MIME by magic bytes, not extension
+    mime = magic.from_buffer(blob, mime=True)
+    if mime not in ALLOWED_MIME:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "unsupported_file_type")
+
+    # 3. Store with random key (never user filename) - and the *path* itself is encrypted
+    storage_key = f"resumes/{user.id}/{uuid.uuid4()}"
+    await save_private_object(storage_key, blob)
+
+    # 4. PII stored encrypted; never log
+    rec = Resume(
+        id=str(uuid.uuid4()),
+        user_id=user.id,
+        filename_enc=encrypt_field(file.filename),
+        storage_key_enc=encrypt_field(storage_key),
+        raw_text_enc=None,  # populated later by isolated parsing worker
+    )
+    db.add(rec)
+    await db.commit()
+    return {"id": rec.id}
 
 
-@router.get("/", response_model=List[ResumeInDB])
-def read_resumes(
+@router.get("/{resume_id}")
+async def get_resume(
+    resume_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    rec = await db.get(Resume, resume_id)
+    if rec is None or rec.user_id != user.id:     # object-level authz
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "resource_not_found")
+    return {
+        "id": rec.id,
+        "filename": decrypt_field(rec.filename_enc),
+        "created_at": rec.created_at.isoformat(),
+    }
+
+
+@router.get("")
+async def list_resumes(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
     skip: int = 0,
     limit: int = 100,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    resume_svc: ResumeService = Depends(get_resume_svc),
 ):
     limit = min(max(1, limit), 100)
-    return resume_svc.get_resumes(current_user["id"], skip, limit)
-
-
-@router.get("/{resume_id}", response_model=ResumeInDB)
-def read_resume(
-    resume_id: int,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    resume_svc: ResumeService = Depends(get_resume_svc),
-):
-    resume = resume_svc.get_resume(current_user["id"], resume_id)
-    if not resume:
-        raise HTTPException(status_code=404, detail="Resume not found")
-    return resume
-
-
-@router.patch("/{resume_id}", response_model=ResumeInDB)
-def update_resume(
-    resume_id: int,
-    resume_in: ResumeUpdate,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    resume_svc: ResumeService = Depends(get_resume_svc),
-):
-    resume = resume_svc.update_resume(current_user["id"], resume_id, resume_in)
-    if not resume:
-        raise HTTPException(status_code=404, detail="Resume not found")
-    return resume
+    res = await db.execute(
+        select(Resume).where(Resume.user_id == user.id).offset(skip).limit(limit)
+    )
+    resumes = res.scalars().all()
+    return [
+        {
+            "id": r.id,
+            "filename": decrypt_field(r.filename_enc),
+            "created_at": r.created_at.isoformat(),
+            "ats_score": r.ats_score,
+        }
+        for r in resumes
+    ]
 
 
 @router.delete("/{resume_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_resume(
-    resume_id: int,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    resume_svc: ResumeService = Depends(get_resume_svc),
+async def delete_resume(
+    resume_id: str,
+    user: User = Depends(get_current_user_strict),
+    db: AsyncSession = Depends(get_db_session),
 ):
-    if not resume_svc.delete_resume(current_user["id"], resume_id):
-        raise HTTPException(status_code=404, detail="Resume not found")
+    rec = await db.get(Resume, resume_id)
+    if rec is None or rec.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "resource_not_found")
+    await db.delete(rec)
+    await db.commit()
     return None
 
 
 @router.post("/{resume_id}/match")
-def analyze_resume_match(
-    resume_id: int,
+async def analyze_resume_match(
+    resume_id: str,
     job_description: str,
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    resume_svc: ResumeService = Depends(get_resume_svc),
+    user: User = Depends(get_current_user_strict),
+    db: AsyncSession = Depends(get_db_session),
+    request: Request = None,
 ):
     """Analyze how well a resume matches a job description."""
-    try:
-        return resume_svc.analyze_resume_match(current_user["id"], resume_id, job_description)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    from app.services.ai_gateway import ai_request, local_match_score
+    from app.core.ai_guard import validate_input
 
+    rec = await db.get(Resume, resume_id)
+    if rec is None or rec.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "resource_not_found")
 
-@router.post("/upload", response_model=ResumeInDB)
-async def upload_resume(
-    file: UploadFile = File(...),
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    resume_svc: ResumeService = Depends(get_resume_svc),
-):
-    """Upload and parse a resume file (PDF or DOCX)."""
-    content = await file.read()
+    validate_input(job_description)
+    resume_text = decrypt_field(rec.raw_text_enc) if rec.raw_text_enc else ""
+
     try:
-        return resume_svc.upload_resume_file(
-            current_user["id"], content, file.filename or "resume.pdf", file.content_type or "application/pdf"
+        result = await ai_request(
+            db=db, user_id=str(user.id), request=request, route="match",
+            provider="gemini" if settings.GEMINI_API_KEY else "mistral",
+            prompt=f"Resume:\n{resume_text}\n\nJob description:\n{job_description}\n\nScore how well the resume matches the job description. Reply with JSON: {{\"match_score\": <int 0-100>, \"feedback\": \"...\"}}",
+            schema_validator=None,
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        # Local fallback
+        result = local_match_score(resume_text, job_description)
+
+    # Update ATS score
+    rec.ats_score = result.get("match_score", 0)
+    await db.commit()
+
+    return result

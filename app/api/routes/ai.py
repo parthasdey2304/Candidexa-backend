@@ -1,12 +1,15 @@
-from typing import Any, Dict
+from __future__ import annotations
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
-from app.services.ai_gateway import PromptInjectionError, ai_gateway
+from app.api.deps import get_current_user, get_db_session
+from app.services.ai_gateway import ai_request, local_match_score, template_cover_letter
+from app.core.config import settings
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1/ai", tags=["ai"])
 
 
 class AIMatchRequest(BaseModel):
@@ -32,33 +35,36 @@ class CoverLetterResponse(BaseModel):
     provider: str
 
 
-def _enforce_limits(request: Request, user: Dict[str, Any]) -> None:
-    allowed, retry_after = ai_gateway.check_limits(str(user["id"]))
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail="AI rate limit or daily quota exceeded. Please try again later.",
-            headers={"Retry-After": str(retry_after)},
-        )
-
-
 @router.post("/match", response_model=AIMatchResponse)
 async def analyze_match(
     payload: AIMatchRequest,
     request: Request,
-    current_user: Dict[str, Any] = Depends(get_current_user),
+    user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
-    _enforce_limits(request, current_user)
     try:
-        result = await ai_gateway.analyze_match(
-            str(current_user["id"]), payload.resume_text, payload.job_description
+        result = await ai_request(
+            db=db,
+            user_id=str(user.id),
+            request=request,
+            route="match",
+            provider="gemini" if settings.GEMINI_API_KEY else "mistral",
+            prompt=(
+                "You are an ATS resume scanner. Reply with ONLY a JSON object of the shape "
+                '{"match_score": <integer 0-100>, "feedback": "<2-4 sentences of specific, actionable feedback>"} '
+                "with no markdown fences and no extra text.\n\n"
+                f"Resume:\n{payload.resume_text}\n\nJob description:\n{payload.job_description}\n\n"
+                "Score how well the resume matches the job description."
+            ),
         )
-    except PromptInjectionError:
-        raise HTTPException(status_code=400, detail="Malicious input detected (prompt injection).")
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception:
+        # Local fallback
+        result = local_match_score(payload.resume_text, payload.job_description)
+
     return AIMatchResponse(
-        match_score=result.match_score, feedback=result.feedback, provider=result.provider
+        match_score=result.get("match_score", 0),
+        feedback=result.get("feedback", ""),
+        provider=result.get("provider", "local-fallback"),
     )
 
 
@@ -66,19 +72,23 @@ async def analyze_match(
 async def generate_cover_letter(
     payload: CoverLetterRequest,
     request: Request,
-    current_user: Dict[str, Any] = Depends(get_current_user),
+    user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
 ):
-    _enforce_limits(request, current_user)
     try:
-        result = await ai_gateway.generate_cover_letter(
-            str(current_user["id"]),
-            payload.resume_text,
-            payload.job_description,
-            payload.tone,
-            payload.length,
+        result = await ai_request(
+            db=db,
+            user_id=str(user.id),
+            request=request,
+            route="cover_letter",
+            provider="gemini" if settings.GEMINI_API_KEY else "mistral",
+            prompt=(
+                "You are an expert cover-letter writer. Write only the letter body text, no preamble.\n\n"
+                f"Write a {payload.length} cover letter with a {payload.tone} tone.\n\n"
+                f"Resume:\n{payload.resume_text}\n\nJob description:\n{payload.job_description}"
+            ),
         )
-    except PromptInjectionError:
-        raise HTTPException(status_code=400, detail="Malicious input detected (prompt injection).")
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    return CoverLetterResponse(cover_letter=result.text, provider=result.provider)
+    except Exception:
+        result = {"text": template_cover_letter(payload.resume_text, payload.job_description, payload.tone, payload.length), "provider": "local-fallback"}
+
+    return CoverLetterResponse(cover_letter=result.get("text", ""), provider=result.get("provider", "local-fallback"))

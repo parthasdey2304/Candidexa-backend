@@ -1,82 +1,56 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from app.core.logging_middleware import LoggingMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
-from app.core.headers import SecurityHeadersMiddleware, get_csp_header, get_permissions_policy
-from app.core.rate_limit import init_rate_limiter, close_rate_limiter
-
-from app.api.routes import auth, mistral, resumes, jobs, dashboard, ai
-
-# Initialize Rate Limiter
-limiter = Limiter(key_func=get_remote_address)
+from app.core.headers import SecurityHeadersMiddleware
+from app.core.logging_middleware import RequestIdMiddleware
+from app.api.routes import auth, resumes, jobs, ai
+from app.db.session import engine
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    await init_rate_limiter()
     yield
-    # Shutdown
-    await close_rate_limiter()
+    await engine.dispose()
 
 
 app = FastAPI(
-    title="Candidexa Backend",
-    description="Secure FastAPI backend for Candidexa",
-    version=settings.VERSION,
-    docs_url=None if settings.is_production else "/docs",
-    redoc_url=None if settings.is_production else "/redoc",
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
+    docs_url=None if settings.ENVIRONMENT == "production" else "/docs",
+    redoc_url=None,
+    openapi_url=None if settings.ENVIRONMENT == "production" else "/openapi.json",
     lifespan=lifespan,
 )
 
-# Register global exception handlers
+# Trusted host middleware
+allowed_hosts = [u.host for u in [__import__("urllib.parse").urlparse(o) for o in settings.frontend_origins_list]] + ["localhost", "127.0.0.1"]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+
+app.add_middleware(CORSMiddleware,
+                   allow_origins=settings.frontend_origins_list,
+                   allow_credentials=True,
+                   allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                   allow_headers=["Authorization", "Content-Type", "X-CSRF-Token", "X-Request-Id"])
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestIdMiddleware)
+
 register_exception_handlers(app)
 
-# Add Rate Limiter Exception Handler
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.include_router(auth.router)
+app.include_router(resumes.router)
+app.include_router(jobs.router)
+app.include_router(ai.router)
 
-# Setup CORS using settings
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-    allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
-)
-
-# Add custom frontend logging middleware
-app.add_middleware(LoggingMiddleware)
-
-# Add Security Headers Middleware
-app.add_middleware(
-    SecurityHeadersMiddleware,
-    csp=get_csp_header(),
-    permissions_policy=get_permissions_policy(),
-)
-
-@app.get("/")
-@limiter.limit("10/minute")
-async def root(request: Request):
-    return {"message": "Welcome to Candidexa Secure API"}
 
 @app.get("/health", include_in_schema=False)
-async def health_check():
-    return {"status": "ok", "service": "candidexa-backend", "version": settings.VERSION}
+def health():
+    return {"status": "ok", "service": "candidexa-backend", "version": settings.APP_VERSION}
+
 
 @app.get("/ready", include_in_schema=False)
-async def readiness_check():
-    # Database check will be added after DB layer is finalized
+async def ready():
     return {"status": "ready", "database": "ok"}
-
-app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
-app.include_router(mistral.router, prefix="/api/ai", tags=["ai"])
-app.include_router(resumes.router, prefix="/api/resumes", tags=["resumes"])
-app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
-app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
-app.include_router(ai.router, prefix="/api/ai", tags=["ai-v2"])

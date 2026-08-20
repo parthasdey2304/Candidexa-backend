@@ -1,203 +1,90 @@
-"""AI request validation and guardrails.
-
-Provides input validation, PII redaction, prompt injection detection,
-and structured output parsing for AI requests.
-"""
-
-import json
-import logging
-import re
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
-
+from __future__ import annotations
+import time
+import asyncio
+from datetime import datetime, timezone, timedelta
+from fastapi import HTTPException, status
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.models import AIUsageLedger
 from app.core.config import settings
-
-logger = logging.getLogger("ai_guard")
-
-# PII patterns to redact before sending to AI providers
-PII_PATTERNS = [
-    (re.compile(r"[\w\.-]+@[\w\.-]+\.\w+"), "[REDACTED_EMAIL]"),
-    (re.compile(r"\+?\d[\d\s-]{8,13}\d"), "[REDACTED_PHONE]"),
-    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[REDACTED_SSN]"),
-    (re.compile(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"), "[REDACTED_CARD]"),
-]
-
-# Common prompt injection patterns
-SUSPICIOUS_PHRASES = [
-    "ignore previous",
-    "ignore all previous",
-    "forget all",
-    "disregard previous",
-    "system prompt",
-    "you are now",
-    "reveal your prompt",
-    "drop table",
-    "bypass",
-    "override",
-    "pretend to be",
-    "act as",
-    "simulate",
-    "ignore instructions",
-    "new instructions",
-    "forget instructions",
-    "previous instructions",
-]
-
-# Common stopwords for keyword extraction
-STOPWORDS = {
-    "the", "and", "for", "with", "you", "your", "our", "are", "will", "have",
-    "this", "that", "from", "they", "their", "than", "then", "them", "such",
-    "who", "what", "how", "why", "all", "any", "can", "has", "was", "were",
-    "not", "but", "its", "it's", "into", "over", "under", "about", "across",
-    "using", "use", "used", "must", "should", "would", "could", "able",
-    "years", "year", "work", "working", "team", "teams", "role", "roles",
-    "job", "jobs", "candidate", "candidates", "experience", "strong",
-    "including", "include", "includes", "plus", "etc", "within", "while",
-    "other", "others", "new", "well", "good", "best", "more", "most", "also",
-    "a", "an", "in", "on", "at", "to", "of", "or", "as", "is", "be", "by",
-    "we", "us", "it", "he", "she", "do", "does", "did", "so", "if", "no",
-}
+from app.core.rate_limit import rate_limit, user_key
+from app.core.errors import ServiceUnavailableError
 
 
-class PromptInjectionError(ValueError):
-    """Raised when input text matches common prompt-injection patterns."""
+async def enforce_ai_limits(db: AsyncSession, user_id: str, request) -> None:
+    # 1. per-user per-minute rate limit
+    await rate_limit(user_key(user_id, "ai"), settings.AI_REQUESTS_PER_MINUTE)
 
-
-class InputTooLargeError(ValueError):
-    """Raised when input exceeds maximum allowed size."""
-
-
-class InvalidProviderResponseError(ValueError):
-    """Raised when AI provider returns malformed response."""
-
-
-def redact_pii(text: str) -> str:
-    """Redact PII from text before sending to AI providers."""
-    for pattern, replacement in PII_PATTERNS:
-        text = pattern.sub(replacement, text)
-    return text
-
-
-def check_prompt_injection(text: str) -> bool:
-    """Check if text contains suspicious prompt injection patterns."""
-    text_lower = text.lower()
-    return any(phrase in text_lower for phrase in SUSPICIOUS_PHRASES)
-
-
-def validate_input_size(text: str, max_chars: Optional[int] = None) -> None:
-    """Validate input size against configured limits."""
-    limit = max_chars or settings.AI_MAX_INPUT_CHARS
-    if len(text) > limit:
-        raise InputTooLargeError(
-            f"Input exceeds maximum of {limit} characters (got {len(text)})"
-        )
-
-
-def validate_input(*texts: str) -> None:
-    """Validate all input texts for injection and size."""
-    for text in texts:
-        if check_prompt_injection(text):
-            raise PromptInjectionError("Malicious input detected (prompt injection).")
-        validate_input_size(text)
-
-
-@dataclass
-class MatchResult:
-    """Structured result from resume-job match analysis."""
-    match_score: int
-    feedback: str
-    provider: str
-
-
-@dataclass
-class GenerationResult:
-    """Structured result from text generation."""
-    text: str
-    provider: str
-
-
-def extract_keywords(text: str) -> set:
-    """Extract meaningful keywords from text."""
-    words = re.findall(r"[a-zA-Z][a-zA-Z+#.\-]{2,}", text.lower())
-    return {w.strip(".-") for w in words} - STOPWORDS
-
-
-def local_match_score(resume_text: str, job_description: str) -> MatchResult:
-    """Deterministic keyword-overlap scorer used as final fallback."""
-    jd_keywords = extract_keywords(job_description)
-    resume_keywords = extract_keywords(resume_text)
-    
-    if not jd_keywords:
-        return MatchResult(
-            50,
-            "No keywords could be extracted from the job description.",
-            "local-fallback"
-        )
-
-    matched = jd_keywords & resume_keywords
-    missing = sorted(jd_keywords - resume_keywords)
-    ratio = len(matched) / len(jd_keywords)
-    score = max(20, min(95, round(40 + 55 * ratio)))
-
-    if missing:
-        sample = ", ".join(missing[:12])
-        feedback = (
-            f"Deterministic keyword analysis: your resume covers {len(matched)} of "
-            f"{len(jd_keywords)} job-description keywords. Consider addressing "
-            f"keywords such as: {sample}."
-        )
-    else:
-        feedback = (
-            f"Deterministic keyword analysis: your resume covers all "
-            f"{len(jd_keywords)} extracted job-description keywords."
-        )
-    return MatchResult(score, feedback, "local-fallback")
-
-
-def parse_match_response(raw: str) -> Tuple[Optional[int], str]:
-    """Parse AI response for match score and feedback.
-    
-    Returns (score, feedback) where score is None if parsing failed.
-    """
-    json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if json_match:
-        try:
-            parsed = json.loads(json_match.group(0))
-            score = int(parsed.get("match_score"))
-            if 0 <= score <= 100:
-                feedback = parsed.get("feedback", "").strip()
-                if feedback:
-                    return score, feedback
-                return score, raw.strip()
-        except (ValueError, TypeError, json.JSONDecodeError):
-            pass
-    return None, raw.strip()
-
-
-def template_cover_letter(
-    resume_text: str,
-    job_description: str,
-    tone: str,
-    length: str,
-) -> str:
-    """Generate a template cover letter as fallback."""
-    opening = {
-        "professional": "I am writing to express my strong interest in this position.",
-        "enthusiastic": "I was genuinely excited to see this opening — it aligns exactly with where I want to take my career.",
-        "confident": "This role is precisely the kind of challenge I am looking for, and I believe I can deliver from day one.",
-    }.get(tone.lower(), "I am writing to apply for this position.")
-
-    jd_keywords = extract_keywords(job_description)
-    keywords = sorted(jd_keywords)[:8]
-    keyword_line = ", ".join(keywords) if keywords else "the core requirements"
-    closing = (
-        "I would welcome the opportunity to discuss how my experience maps to your needs. "
-        "Thank you for your time and consideration."
+    # 2. daily token quota
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    daily = await db.scalar(
+        select(func.coalesce(func.sum(AIUsageLedger.input_tokens + AIUsageLedger.output_tokens), 0))
+        .where(AIUsageLedger.user_id == user_id, AIUsageLedger.created_at >= today_start)
     )
-    short = length.lower() in {"short", "brief", "concise"}
-    body = (
-        f"{opening} My background aligns well with {keyword_line}. "
-        if short
-        else f"{opening} Having reviewed the job description, I see a strong overlap with my experience across {keyword_line}. "
+    if (daily or 0) >= settings.AI_DAILY_TOKEN_LIMIT:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "daily_token_quota_exceeded")
+
+    # 3. monthly token quota
+    month_start = today_start.replace(day=1)
+    monthly = await db.scalar(
+        select(func.coalesce(func.sum(AIUsageLedger.input_tokens + AIUsageLedger.output_tokens), 0))
+        .where(AIUsageLedger.user_id == user_id, AIUsageLedger.created_at >= month_start)
     )
-    return f"{body}{closing}"
+    if (monthly or 0) >= settings.AI_MONTHLY_TOKEN_LIMIT:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "monthly_token_quota_exceeded")
+
+    # 4. monthly spend cap (micro-USD integer)
+    spend = await db.scalar(
+        select(func.coalesce(func.sum(AIUsageLedger.cost_usd), 0))
+        .where(AIUsageLedger.user_id == user_id, AIUsageLedger.created_at >= month_start)
+    )
+    if (spend or 0) / 1_000_000 >= settings.AI_MONTHLY_SPEND_USD_LIMIT:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "monthly_spend_cap_reached")
+
+
+async def record_ai_usage(
+    db: AsyncSession, *, user_id: str, provider: str, route: str,
+    input_tokens: int, output_tokens: int, cost_usd: float, request_id: str, status_: str = "ok",
+) -> None:
+    db.add(AIUsageLedger(
+        user_id=user_id, provider=provider, route=route,
+        input_tokens=input_tokens, output_tokens=output_tokens,
+        cost_usd=int(cost_usd * 1_000_000), status=status_, request_id=request_id,
+    ))
+    await db.commit()
+
+
+# Simple in-memory circuit breaker (single-instance; for multi-process use Redis).
+class CircuitBreaker:
+    def __init__(self, name: str):
+        self.name = name
+        self._failures = 0
+        self._opened_at = 0.0
+
+    def record_failure(self):
+        self._failures += 1
+        if self._failures >= settings.AI_CIRCUIT_BREAKER_THRESHOLD:
+            self._opened_at = time.time()
+
+    def record_success(self):
+        self._failures = 0
+        self._opened_at = 0.0
+
+    def guard(self):
+        if self._opened_at and time.time() - self._opened_at < settings.AI_CIRCUIT_BREAKER_COOLDOWN_SECONDS:
+            raise ServiceUnavailableError("ai_provider_unavailable")
+        if self._opened_at and time.time() - self._opened_at >= settings.AI_CIRCUIT_BREAKER_COOLDOWN_SECONDS:
+            # half-open - allow one attempt
+            self._opened_at = 0.0
+
+
+breakers = {"gemini": CircuitBreaker("gemini"), "mistral": CircuitBreaker("mistral")}
+
+
+async def call_with_timeout(coro, timeout: int, breaker: CircuitBreaker):
+    breaker.guard()
+    try:
+        return await asyncio.wait_for(coro, timeout=timeout)
+    except (asyncio.TimeoutError, Exception) as e:
+        breaker.record_failure()
+        raise
