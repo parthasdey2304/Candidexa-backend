@@ -42,11 +42,22 @@ async def get_me(user = Depends(get_current_user)):
 @router.post("/register", status_code=status.HTTP_201_CREATED, dependencies=[Depends(auth_rate_limit)])
 async def register(
     request: Request,
-    email: str,
-    password: str,
+    email: str | None = None,
+    password: str | None = None,
     full_name: str | None = None,
     db: AsyncSession = Depends(get_db_session),
 ):
+    # Accept JSON {email,password,full_name/name} or query params for compatibility
+    try:
+        data = await request.json()
+        if isinstance(data, dict):
+            email = data.get("email") or email
+            password = data.get("password") or password
+            full_name = data.get("full_name") or data.get("name") or full_name
+    except Exception:
+        pass
+    if not email or not password:
+        raise HTTPException(status_code=422, detail="email and password required")
     """Register a new user using standard email and password."""
     # Check if user exists via blind index
     existing = await db.execute(
@@ -92,20 +103,37 @@ async def register(
 @router.post("/login", dependencies=[Depends(auth_rate_limit)])
 async def login(
     request: Request,
-    form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """OAuth2 compatible token login, get an access token for future requests."""
+    """Login - accepts JSON {email,password} or form {username,password}."""
+    email: str | None = None
+    password: str | None = None
+    try:
+        data = await request.json()
+        if isinstance(data, dict):
+            email = data.get("email") or data.get("username")
+            password = data.get("password")
+    except Exception:
+        pass
+    if not email or not password:
+        try:
+            form = await request.form()
+            email = email or form.get("username") or form.get("email")  # type: ignore
+            password = password or form.get("password")  # type: ignore
+        except Exception:
+            pass
+    if not email or not password:
+        raise HTTPException(status_code=422, detail="email/username and password required")
     # Find user by email blind index
     result = await db.execute(
-        select(User).where(User.email_hmac == blind_index(form_data.username))
+        select(User).where(User.email_hmac == blind_index(email))
     )
     user = result.scalar_one_or_none()
 
     if user is None or user.auth_provider != "email":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect email or password")
 
-    if not verify_password(form_data.password, user.hashed_password):
+    if not verify_password(password, user.hashed_password):
         # Increment failed attempts
         user.failed_login_attempts += 1
         if user.failed_login_attempts >= 5:
