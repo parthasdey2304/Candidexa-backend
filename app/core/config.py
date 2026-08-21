@@ -53,6 +53,7 @@ class Settings(BaseSettings):
 
     GEMINI_API_KEY: str | None = None
     MISTRAL_API_KEY: str | None = None
+    GOOGLE_CLIENT_ID: str | None = None
 
     # --- Upload ---
     MAX_RESUME_SIZE_MB: int = 10

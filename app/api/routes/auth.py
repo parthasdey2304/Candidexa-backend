@@ -3,6 +3,7 @@ from datetime import datetime, timezone, timedelta
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, OAuth2PasswordRequestForm
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
@@ -253,3 +254,53 @@ async def google_auth(
 
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Google token")
+
+
+# ---------------------------------------------------------------------------
+# OAuth redirect aliases — frontend calls GET /api/proxy/auth/oauth/google
+# Backend primary route is POST /api/v1/auth/google (credential flow).
+# Add GET aliases to avoid 404 on Railway/Render when frontend does
+# window.location.href = "/api/proxy/auth/oauth/google"
+# ---------------------------------------------------------------------------
+@router.get("/oauth/google", include_in_schema=False)
+async def oauth_google_get(request: Request):
+    """Redirect to Google OAuth consent. If GOOGLE_CLIENT_ID not set, return helpful 503."""
+    if not settings.GOOGLE_CLIENT_ID or settings.GOOGLE_CLIENT_ID == "replace_me":
+        raise HTTPException(status_code=503, detail="Google OAuth not configured on server (GOOGLE_CLIENT_ID missing)")
+    # Build Google OAuth2 authorize URL (code flow)
+    # Use first frontend origin as redirect_uri base
+    frontend = settings.frontend_origins_list[0] if settings.frontend_origins_list else "http://localhost:3000"
+    redirect_uri = f"{frontend}/api/auth/callback/google"
+    # For direct backend callback, alternative: redirect_uri = str(request.base_url).rstrip("/") + "/api/v1/auth/oauth/google/callback"
+    params = (
+        f"client_id={settings.GOOGLE_CLIENT_ID}"
+        f"&redirect_uri={redirect_uri}"
+        f"&response_type=code"
+        f"&scope=openid%20email%20profile"
+        f"&access_type=offline&prompt=consent"
+    )
+    return RedirectResponse(url=f"https://accounts.google.com/o/oauth2/v2/auth?{params}", status_code=302)
+
+
+@router.post("/oauth/google", include_in_schema=False)
+async def oauth_google_post_alias(request: Request, credential: str, db: AsyncSession = Depends(get_db_session)):
+    """Alias for POST /google — accepts same credential payload via /oauth/google path."""
+    return await google_auth(request, credential, db)
+
+
+@router.get("/oauth/google/callback", include_in_schema=False)
+async def oauth_google_callback(request: Request, code: str | None = None, db: AsyncSession = Depends(get_db_session)):
+    """OAuth code callback — exchange code for tokens (stub, returns 501 until full code-exchange implemented)."""
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing OAuth code")
+    raise HTTPException(status_code=501, detail="OAuth code exchange not yet implemented — use POST /api/v1/auth/google with credential")
+
+
+@router.get("/oauth/github", include_in_schema=False)
+async def oauth_github_get():
+    raise HTTPException(status_code=501, detail="GitHub OAuth not yet implemented — use GitHub PAT flow")
+
+
+@router.post("/oauth/github", include_in_schema=False)
+async def oauth_github_post():
+    raise HTTPException(status_code=501, detail="GitHub OAuth not yet implemented")
