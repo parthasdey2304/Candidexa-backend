@@ -6,7 +6,7 @@ from app.api.deps import get_db, get_current_user
 from app.schemas.core import JobCreate, JobUpdate, JobInDB
 from app.services.job_service import JobService, get_job_service
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
 
 def get_job_svc(db: Client = Depends(get_db)) -> JobService:

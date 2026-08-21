@@ -29,17 +29,24 @@ return 1
 
 
 async def rate_limit(key: str, limit_per_min: int) -> None:
-    r = _client()
-    now = int(time.time() * 1000)
-    import uuid
-    unique_id = f"{now}:{uuid.uuid4().hex[:8]}"
-    res = await r.eval(_LUA, 1, key, now, 60_000, limit_per_min, unique_id)
-    if int(res) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="rate_limit_exceeded",
-            headers={"Retry-After": "60"},
-        )
+    try:
+        r = _client()
+        now = int(time.time() * 1000)
+        import uuid
+        unique_id = f"{now}:{uuid.uuid4().hex[:8]}"
+        res = await r.eval(_LUA, 1, key, now, 60_000, limit_per_min, unique_id)
+        if int(res) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="rate_limit_exceeded",
+                headers={"Retry-After": "60"},
+            )
+    except HTTPException:
+        raise
+    except Exception as e:  # Redis down -> fail-open (health/ready must not block)
+        import logging
+        logging.getLogger("candidexa.rate_limit").warning(f"rate_limit redis unavailable, failing open: {e}")
+        return
 
 
 def ip_key(request: Request, bucket: str) -> str:

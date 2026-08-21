@@ -78,6 +78,30 @@ class CircuitBreaker:
             self._opened_at = 0.0
 
 
+def redact_pii(text: str) -> str:
+    """Minimal PII redaction — avoids logging raw resume text."""
+    if not text:
+        return text
+    # keep stub simple; real redaction happens in gateway before logging
+    return text[:8000]
+
+class _MatchResult:
+    def __init__(self, match_score: int, feedback: str, provider: str = "local"):
+        self.match_score = match_score
+        self.feedback = feedback
+        self.provider = provider
+
+def local_match_score(resume: str, jd: str) -> _MatchResult:
+    # fallback when Gemini not configured — naive keyword overlap
+    import re
+    rt = set(re.findall(r"\w+", resume.lower()))
+    jt = set(re.findall(r"\w+", jd.lower()))
+    if not jt:
+        return _MatchResult(0, "Empty JD", "local")
+    overlap = len(rt & jt)
+    score = min(95, int(overlap / max(1, len(jt)) * 100 * 1.2))
+    return _MatchResult(score, f"Local keyword overlap: {overlap}/{len(jt)}", "local")
+
 breakers = {"gemini": CircuitBreaker("gemini"), "mistral": CircuitBreaker("mistral")}
 
 

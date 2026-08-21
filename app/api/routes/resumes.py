@@ -7,7 +7,18 @@ from app.core.crypto import encrypt_field, blind_index, decrypt_field
 from app.core.config import settings
 from app.services.storage_service import save_private_object
 import uuid
-import magic
+try:
+    import magic  # python-magic — requires libmagic (fails on Windows)
+    def _detect_mime(blob: bytes) -> str:
+        return magic.from_buffer(blob, mime=True)
+except Exception:  # pragma: no cover - Windows fallback
+    def _detect_mime(blob: bytes) -> str:
+        # fallback: sniff PDF/DOCX magic bytes
+        if blob.startswith(b"%PDF"):
+            return "application/pdf"
+        if blob.startswith(b"PK\x03\x04"):
+            return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        return "application/octet-stream"
 
 router = APIRouter(prefix="/api/v1/resumes", tags=["resumes"])
 ALLOWED_MIME = {"application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
@@ -27,7 +38,7 @@ async def upload_resume(
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file_too_large")
 
     # 2. MIME by magic bytes, not extension
-    mime = magic.from_buffer(blob, mime=True)
+    mime = _detect_mime(blob)
     if mime not in ALLOWED_MIME:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "unsupported_file_type")
 
@@ -37,7 +48,6 @@ async def upload_resume(
 
     # 4. PII stored encrypted; never log
     rec = Resume(
-        id=str(uuid.uuid4()),
         user_id=user.id,
         filename_enc=encrypt_field(file.filename),
         storage_key_enc=encrypt_field(storage_key),

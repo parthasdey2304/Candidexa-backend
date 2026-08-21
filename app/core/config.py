@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     FIELD_BLIND_INDEX_KEY: str
 
     # --- CORS ---
-    FRONTEND_ORIGINS: str = "http://localhost:3000"
+    FRONTEND_ORIGINS: str = "http://localhost:3000,http://localhost:3001,http://localhost:3002,http://127.0.0.1:3000,http://127.0.0.1:3001,https://candidexa.vercel.app,https://candidexa.app,https://www.candidexa.app"
 
     # --- Rate limits ---
     REDIS_URL: str = "redis://localhost:6379/0"

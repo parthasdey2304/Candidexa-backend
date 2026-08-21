@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from argon2 import PasswordHasher
+from argon2.low_level import Type
 from argon2.exceptions import VerifyMismatchError, InvalidHashError
 from jose import jwt, JWTError
 
@@ -21,11 +22,14 @@ _argon2 = PasswordHasher(
     parallelism=2,
     hash_len=32,
     salt_len=16,
-    type=2,                  # argon2.Type.ID
+    type=Type.ID,
 )
 
 
 # ---------- Passwords ----------
+def get_password_hash(plain: str) -> str:
+    return hash_password(plain)
+
 def hash_password(plain: str) -> str:
     if not plain or len(plain) < 8:
         raise ValueError("Password must be at least 8 characters")

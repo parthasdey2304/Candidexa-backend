@@ -10,8 +10,12 @@ from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from supabase import create_client, Client
 
+from sqlalchemy.orm import declarative_base
+
+# Base lives in app.db.base to avoid circular imports (session ↔ models ↔ ai_guard ↔ config)
+from app.db.base import Base
+
 from app.core.config import settings
-from app.db.models import Base
 
 
 # --- Supabase Client (for API-based access) ---

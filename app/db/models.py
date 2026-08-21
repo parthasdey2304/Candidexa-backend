@@ -2,7 +2,7 @@ from __future__ import annotations
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, BigInteger, func
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
-from app.db.session import Base
+from app.db.base import Base
 from app.db.types import EncryptedString, EncryptedLargeString
 from app.core.crypto import blind_index, decrypt_field, encrypt_field
 

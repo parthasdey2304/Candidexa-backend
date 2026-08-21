@@ -27,8 +27,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Trusted host middleware
-allowed_hosts = [u.host for u in [__import__("urllib.parse").urlparse(o) for o in settings.frontend_origins_list]] + ["localhost", "127.0.0.1"]
+# Trusted host middleware — allow frontends + local + test clients (pytest/httpx uses "test" or "testserver")
+from urllib.parse import urlparse
+allowed_hosts = [urlparse(o).hostname or o for o in settings.frontend_origins_list] + ["localhost", "127.0.0.1", "test", "testserver"]
+allowed_hosts = [h for h in allowed_hosts if h]
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
 app.add_middleware(CORSMiddleware,

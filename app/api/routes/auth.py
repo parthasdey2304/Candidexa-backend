@@ -9,7 +9,7 @@ from google.auth.transport import requests as google_requests
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db_session, auth_rate_limit
+from app.api.deps import get_db_session, auth_rate_limit, get_current_user
 from app.core.security import (
     hash_password,
     verify_password,
@@ -21,7 +21,21 @@ from app.core.crypto import blind_index
 from app.core.config import settings
 from app.db.models import User, RefreshToken
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+
+@router.get("/me")
+async def get_me(user = Depends(get_current_user)):
+    """Return current authenticated user - used by frontend AuthProvider bootstrap."""
+    return {
+        "user": {
+            "id": str(user.id),
+            "email": user.email,
+            "name": user.full_name or user.email.split("@")[0],
+            "avatarUrl": None,
+        },
+        "plan": None,
+    }
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED, dependencies=[Depends(auth_rate_limit)])
