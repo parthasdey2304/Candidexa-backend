@@ -21,7 +21,7 @@ class User(Base):
     failed_login_attempts = Column(Integer, default=0, nullable=False)
     locked_until = Column(DateTime, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     resumes = relationship("Resume", back_populates="owner", cascade="all, delete-orphan")
     jobs = relationship("Job", back_populates="owner", cascade="all, delete-orphan")
@@ -99,7 +99,7 @@ class Resume(Base):
     is_master = Column(Boolean, default=False)
     ats_score = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     owner = relationship("User", back_populates="resumes")
     applications = relationship("Application", back_populates="resume")
@@ -131,7 +131,7 @@ class Application(Base):
     match_score = Column(Integer, default=0)
     applied_date = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     owner = relationship("User", back_populates="applications")
     job = relationship("Job", back_populates="applications")
