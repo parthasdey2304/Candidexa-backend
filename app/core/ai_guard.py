@@ -1,7 +1,7 @@
 from __future__ import annotations
 import time
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -109,6 +109,6 @@ async def call_with_timeout(coro, timeout: int, breaker: CircuitBreaker):
     breaker.guard()
     try:
         return await asyncio.wait_for(coro, timeout=timeout)
-    except (asyncio.TimeoutError, Exception) as e:
+    except (asyncio.TimeoutError, Exception):
         breaker.record_failure()
         raise

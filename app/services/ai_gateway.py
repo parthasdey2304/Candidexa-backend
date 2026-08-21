@@ -1,5 +1,7 @@
 from __future__ import annotations
 import json
+import re
+
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
@@ -52,7 +54,7 @@ async def ai_request(
                              input_tokens=0, output_tokens=0, cost_usd=0,
                              request_id=request_id, status_="timeout")
         raise ServiceUnavailableError("ai_timeout")
-    except Exception as e:
+    except Exception:
         breaker.record_failure()
         await record_ai_usage(db, user_id=user_id, provider=provider, route=route,
                              input_tokens=0, output_tokens=0, cost_usd=0,
@@ -113,8 +115,6 @@ async def _call_mistral(api_key: str, prompt: str, max_tokens: int):
 
 
 # Local fallback - deterministic scorer
-import re
-
 STOPWORDS = {
     "the", "and", "for", "with", "you", "your", "our", "are", "will", "have",
     "this", "that", "from", "they", "their", "than", "then", "them", "such",

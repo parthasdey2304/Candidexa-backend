@@ -1,10 +1,8 @@
 """Storage service for private object storage (e.g., Supabase Storage or S3-compatible)."""
 
 from __future__ import annotations
-import uuid
-from typing import Optional
 
-from supabase import Client, create_client
+from supabase import create_client
 
 from app.core.config import settings
 

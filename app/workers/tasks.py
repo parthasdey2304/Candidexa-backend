@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from celery import shared_task
-from celery.exceptions import MaxRetriesExceededError
 
 from app.workers.celery_app import celery_app
 
@@ -106,7 +105,6 @@ def process_resume_upload(self, user_id: str, file_id: str, original_filename: s
             data={"resume_id": "new-resume-id", "ats_score": 85},
         )
     except Exception as exc:
-        error_id = f"task-{task_id[:8]}"
         _record_task_completion("process_resume_upload", task_id, user_id, False, str(exc))
         raise
 
@@ -176,7 +174,6 @@ def generate_tailored_resumes(
         return TaskResult(success=True, data={"results": results, "batch_id": batch_id})
 
     except Exception as exc:
-        error_id = f"task-{task_id[:8]}"
         _record_task_completion(
             "generate_tailored_resumes", task_id, user_id, False, str(exc), batch_id=batch_id
         )
@@ -235,7 +232,6 @@ def generate_code(
             },
         )
     except Exception as exc:
-        error_id = f"task-{task_id[:8]}"
         _record_task_completion("generate_code", task_id, user_id, False, str(exc))
         raise
 
@@ -290,7 +286,6 @@ def push_to_github(
             data={"repo_url": f"https://github.com/user/{repo_name}", "branch": branch},
         )
     except Exception as exc:
-        error_id = f"task-{task_id[:8]}"
         _record_task_completion("push_to_github", task_id, user_id, False, str(exc))
         raise
 
@@ -346,7 +341,6 @@ def deploy_project(
             },
         )
     except Exception as exc:
-        error_id = f"task-{task_id[:8]}"
         _record_task_completion("deploy_project", task_id, user_id, False, str(exc))
         raise
 
@@ -395,7 +389,6 @@ def generate_video(
             data={"video_id": video_id, "video_url": f"https://cdn.example.com/{video_id}.mp4"},
         )
     except Exception as exc:
-        error_id = f"task-{task_id[:8]}"
         _record_task_completion("generate_video", task_id, user_id, False, str(exc))
         raise
 

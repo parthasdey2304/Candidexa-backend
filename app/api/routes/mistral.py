@@ -1,6 +1,6 @@
 import re
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.api.deps import get_current_user
@@ -104,7 +104,7 @@ async def analyze_match(
         
         except httpx.HTTPStatusError as e:
             raise HTTPException(status_code=e.response.status_code, detail="Error communicating with AI provider")
-        except Exception as e:
+        except Exception:
             raise HTTPException(status_code=500, detail="Internal server error during AI analysis")
 
 
@@ -155,5 +155,5 @@ async def generate_cover_letter(
         
         except httpx.HTTPStatusError as e:
             raise HTTPException(status_code=e.response.status_code, detail="Error communicating with AI provider")
-        except Exception as e:
+        except Exception:
             raise HTTPException(status_code=500, detail="Internal server error during AI generation")

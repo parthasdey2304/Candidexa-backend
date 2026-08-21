@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, get_current_user_strict, get_db_session
 from app.db.models import User, Resume
-from app.core.crypto import encrypt_field, blind_index, decrypt_field
+from app.core.crypto import encrypt_field, decrypt_field
 from app.core.config import settings
 from app.services.storage_service import save_private_object
 import uuid

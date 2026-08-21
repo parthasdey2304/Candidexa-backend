@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from app.db.session import get_db
 from app.db.models import User, RefreshToken
 from app.core.security import decode_token
@@ -31,7 +30,7 @@ async def get_current_user(
 
     try:
         payload = decode_token(creds.credentials, expected_type="access")
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_token")
 
     user = await db.get(User, payload["sub"])

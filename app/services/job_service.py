@@ -4,7 +4,7 @@ Encapsulates business logic for job operations.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from supabase import Client
 

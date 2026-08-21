@@ -3,11 +3,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from urllib.parse import urlparse
+
+from app.api.routes import auth, resumes, jobs, ai
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.headers import SecurityHeadersMiddleware
 from app.core.logging_middleware import RequestIdMiddleware
-from app.api.routes import auth, resumes, jobs, ai
 from app.db.session import get_async_engine
 
 
@@ -28,7 +30,6 @@ app = FastAPI(
 )
 
 # Trusted host middleware — allow frontends + local + test clients (pytest/httpx uses "test" or "testserver")
-from urllib.parse import urlparse
 allowed_hosts = [urlparse(o).hostname or o for o in settings.frontend_origins_list] + ["localhost", "127.0.0.1", "test", "testserver"]
 allowed_hosts = [h for h in allowed_hosts if h]
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)

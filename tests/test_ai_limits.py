@@ -2,7 +2,6 @@
 
 import pytest
 from httpx import AsyncClient, ASGITransport
-from unittest.mock import AsyncMock, patch, MagicMock
 
 from main import app
 from app.core.ai_guard import (

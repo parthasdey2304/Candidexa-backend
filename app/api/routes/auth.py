@@ -148,7 +148,7 @@ async def refresh_token(
 
     try:
         payload = decode_token(credentials.credentials, expected_type="refresh")
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_token")
 
     rt = await db.get(RefreshToken, payload["jti"])

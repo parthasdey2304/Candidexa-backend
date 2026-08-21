@@ -2,7 +2,6 @@
 
 import pytest
 from httpx import AsyncClient, ASGITransport
-from unittest.mock import AsyncMock, patch
 
 from main import app
 

@@ -23,10 +23,7 @@ from app.core.ai_guard import (
     ServiceUnavailableError,
 )
 from app.core.headers import SecurityHeadersMiddleware
-from app.core.errors import (
-    ServiceUnavailableError,
-    register_exception_handlers,
-)
+from app.core.errors import register_exception_handlers
 
 __all__ = [
     "settings",

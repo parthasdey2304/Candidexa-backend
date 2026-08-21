@@ -1,6 +1,5 @@
 """Tests for encryption."""
 
-import pytest
 from app.core.crypto import (
     encrypt_field,
     decrypt_field,
