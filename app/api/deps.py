@@ -36,8 +36,9 @@ async def get_current_user(
     user = await db.get(User, payload["sub"])
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "user_inactive_or_missing")
-    if not user.is_verified:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "email_not_verified")
+    # For hackathon, allow unverified users to access /me and dashboard (email verification not required)
+    # if not user.is_verified:
+    #     raise HTTPException(status.HTTP_403_FORBIDDEN, "email_not_verified")
     if user.locked_until and user.locked_until > datetime.now(timezone.utc):
         raise HTTPException(status.HTTP_423_LOCKED, "account_temporarily_locked")
     return user
