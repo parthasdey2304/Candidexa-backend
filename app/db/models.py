@@ -30,20 +30,26 @@ class User(Base):
 
     @hybrid_property
     def email(self) -> str | None:
-        if self.email_enc is None:
+        enc = self.__dict__.get("email_enc")
+        if enc is None or not isinstance(enc, str):
             return None
-        return decrypt_field(self.email_enc)
+        return decrypt_field(enc)
 
     @email.setter
     def email(self, value: str) -> None:
         self.email_enc = encrypt_field(value)
         self.email_hmac = blind_index(value)
 
+    @email.expression
+    def email(cls):  # type: ignore[no-redef]
+        return cls.email_enc
+
     @hybrid_property
     def full_name(self) -> str | None:
-        if self.full_name_enc is None:
+        enc = self.__dict__.get("full_name_enc")
+        if enc is None or not isinstance(enc, str):
             return None
-        return decrypt_field(self.full_name_enc)
+        return decrypt_field(enc)
 
     @full_name.setter
     def full_name(self, value: str | None) -> None:
