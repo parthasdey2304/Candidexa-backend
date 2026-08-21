@@ -29,8 +29,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Trusted host middleware — allow frontends + local + test clients (pytest/httpx uses "test" or "testserver")
-allowed_hosts = [urlparse(o).hostname or o for o in settings.frontend_origins_list] + ["localhost", "127.0.0.1", "test", "testserver"]
+# Trusted host middleware — allow frontends + backend hosts + local + test clients
+# Must include Render/Railway backend hosts, otherwise /health returns 400 Invalid host header (seen on 2026-08-21)
+allowed_hosts = (
+    [urlparse(o).hostname or o for o in settings.frontend_origins_list]
+    + [
+        "localhost",
+        "127.0.0.1",
+        "test",
+        "testserver",
+        "candidexa-backend.onrender.com",
+        "candidexa-backend.up.railway.app",
+        "*.onrender.com",
+        "*.up.railway.app",
+        "*.railway.app",
+    ]
+)
 allowed_hosts = [h for h in allowed_hosts if h]
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
